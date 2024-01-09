@@ -1,0 +1,150 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: >-
+  Creates EKS cluster, cluster security group and IAM role
+Parameters:
+  KubernetesClusterName:
+    Type: String
+    Default: kubernetes-cluster
+    Description: Specify the Name of the EKS Kubernetes cluster to tag the resources appropriately
+  Version:
+    Type: String
+    Default: "1.26"
+    Description: Specify the Name of the EKS Kubernetes cluster to tag the resources appropriately
+    AllowedValues:
+      - "1.18"
+      - "1.19"
+      - "1.20"
+      - "1.21"
+      - "1.22"
+      - "1.23"
+      - "1.24"
+      - "1.25"
+      - "1.26"
+  Subnet:
+    Type: 'List<AWS::EC2::Subnet::Id>'
+    Description: Specify the subnet
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC Id of existsing VPC
+    ConstraintDescription: Must be the Id of an existing VPC
+  ServiceIPv4CIDR:
+    Type: String
+    Default: 10.100.0.0/16
+    Description: Specify the Kubernetes Services object IP Range
+Resources: 
+  EKSClusterRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - eks.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      RoleName: !Sub "${KubernetesClusterName}_EKSClusterRole"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+        - arn:aws:iam::aws:policy/AmazonEKSServicePolicy
+  ManagedNodeGroupRole: 
+    Type: "AWS::IAM::Role"
+    Properties: 
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement: 
+          - 
+            Action: 
+              - "sts:AssumeRole"
+            Effect: Allow
+            Principal: 
+              Service: 
+                - ec2.amazonaws.com
+      ManagedPolicyArns: 
+        - "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
+        - "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
+        - "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+      Path: /
+      RoleName: !Sub "${KubernetesClusterName}_ManagedNodeGroupRole"
+  ClusterAutoScalerPolicy:
+    Type: 'AWS::IAM::ManagedPolicy'
+    Properties:
+      ManagedPolicyName: !Sub "${KubernetesClusterName}_ClusterAutoScalerPolicy"
+      Description: Policy for EKS cluster autoscaler
+      Path: /
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - 'autoscaling:DescribeAutoScalingGroups'
+              - 'autoscaling:DescribeAutoScalingInstances'
+              - 'autoscaling:DescribeLaunchConfigurations'
+              - 'autoscaling:DescribeTags'
+              - 'autoscaling:SetDesiredCapacity'
+              - 'autoscaling:TerminateInstanceInAutoScalingGroup'
+              - 'ec2:DescribeLaunchTemplateVersions'
+            Resource: '*'
+      Roles:
+        - !Ref ManagedNodeGroupRole
+  EKSClusterSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ClusterSecurityGroup
+      VpcId:
+        Ref: VpcId
+      SecurityGroupIngress:
+      - IpProtocol: -1
+        CidrIp: 10.10.0.0/16
+    # Type: AWS::EC2::SecurityGroup
+    # Properties:
+    #   GroupName: !Join [ "." , [!Ref KubernetesClusterName,"kubernetes-cluster-sg", !ImportValue NetworkStack-EnvironmentName, !ImportValue NetworkStack-DomainName]]
+    #   GroupDescription: "Security Group for the EKS Cluster"
+    #   Tags: 
+    #     - 
+    #       Key: "Name"
+    #       Value: !Join [ "." , [!Ref KubernetesClusterName,"cluster-sg", !ImportValue NetworkStack-EnvironmentName, !ImportValue NetworkStack-DomainName]]
+    #     - 
+    #       Key: "Environment"
+    #       Value: !ImportValue NetworkStack-EnvironmentName
+    #   VpcId: !ImportValue NetworkStack-VPC
+  KubernetesCluster:
+    Type: AWS::EKS::Cluster
+    Properties: 
+      KubernetesNetworkConfig: 
+          ServiceIpv4Cidr: !Ref ServiceIPv4CIDR
+      Name: !Ref KubernetesClusterName
+      ResourcesVpcConfig:
+        SecurityGroupIds:
+          - !Ref EKSClusterSecurityGroup
+        SubnetIds: !Ref Subnet
+      # ResourcesVpcConfig: 
+      #   SecurityGroupIds:
+      #     - !Ref EKSClusterSecurityGroup
+      #   SubnetIds:
+      #     - !ImportValue NetworkStack-PublicSubnet
+      #     - !ImportValue NetworkStack-PublicSubnet1
+      #     - !ImportValue NetworkStack-PublicSubnet2
+      #     - !ImportValue NetworkStack-PrivateSubnet
+      #     - !ImportValue NetworkStack-PrivateSubnet1
+      #     - !ImportValue NetworkStack-PrivateSubnet2
+      RoleArn: !GetAtt EKSClusterRole.Arn
+      Version: !Ref Version
+Outputs:
+  EKSClusterName:
+    Description: EKSClusterName
+    Value: !Ref KubernetesCluster
+    Export:
+      Name: !Sub '${AWS::StackName}-EKSClusterName'
+  EKSClusterRoleArn:
+    Description: EKS Cluster Node Group Role Arn
+    Value: !GetAtt EKSClusterRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-EKSClusterRoleArn'
+  ManagedNodeGroupRoleArn:
+    Description: Managed Node Group Role Arn
+    Value: !GetAtt ManagedNodeGroupRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-ManagedNodeGroupRoleArn'
